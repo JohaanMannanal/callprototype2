@@ -1,98 +1,133 @@
 let APP_ID = 'de25ddfa18824309a3b511a91397e94f'
 
+
 let peerConnection;
 let localStream;
 let remoteStream;
 
-let uid = String(Math.floor(Math.random)*10000)
+let uid = String(Math.floor(Math.random() * 10000))
 let token = null;
-let client
+let client;
 
 let servers = {
-  iceServers:[
-    {
-      urls:['stun:stun1.1.google.com:19302', 'stun:stun2.1.google.com:19302']
-    }
-  ]
+    iceServers:[
+        {
+            urls:['stun:stun1.1.google.com:19302', 'stun:stun2.1.google.com:19302']
+        }
+    ]
 }
 
+
 let init = async () => {
-  client = await AgoraRTM.createInstance(APP_ID)
-  await client.login({uid, token})
+    client = await AgoraRTM.createInstance(APP_ID)
+    await client.login({uid, token})
+    
+    const channel = client.createChannel('main')
+    channel.join()
 
-  const channel = client.createChannel('main')
-  channel.join()
+    channel.on('MemberJoined', handlePeerJoined)
+    client.on('MessageFromPeer', handleMessageFromPeer)
 
-  channel.on('MemberJoined', handlePeerJoined)
-
-  localStream = await navigator.mediaDevices.getUserMedia({video:true, audio:false})
-  document.querySelector('#user-1').srcObject = localStream
+   localStream = await navigator.mediaDevices.getUserMedia({video:true, audio:false})
+   document.getElementById('user-1').srcObject = localStream
 }
 
 let handlePeerJoined = async (MemberId) => {
-  console.log('A new peer has joined this room:', MemberId)
+    console.log('A new peer has joined this room:', MemberId)
+    createOffer(MemberId)
 }
 
-let createPeerConnection = async (sdpType) => {
-  peerConnection = new RTCPeerConnection(servers)
+let handleMessageFromPeer = async (message, MemberId) => {
+    message = JSON.parse(message.text)
+    console.log('Message:', message.type)
 
-  remoteStream = new MediaStream()
-  document.querySelector('#user-2').srcObject = remoteStream
+    if(message.type === 'offer'){
+        if(!localStream){
+            localStream = await navigator.mediaDevices.getUserMedia({video:true, audio:false})
+            document.getElementById('user-1').srcObject = localStream
+        }
 
-  localStream.getTracks().forEach((track) => {
-    peerConnection.addTrack(track, localStream)
-  })
-
-  peerConnection.ontrack = async (event) => {
-    event.streams[0].getTracks().forEach((track) => {
-      remoteStream.addTrack(track)
-    })
-  }
-
-  peerConnection.onicecandidate = async (event) => {
-    if(event.candidate) {
-      document.querySelector(sdpType).value = JSON.stringify(peerConnection.LocalDescription)
+        document.getElementById('offer-sdp').value = JSON.stringify(message.offer)
+        createAnswer(MemberId)
     }
-  }
+
+    if(message.type === 'answer'){
+        document.getElementById('answer-sdp').value = JSON.stringify(message.answer)
+        addAnswer()
+    }
+
+    if(message.type === 'candidate'){
+        if(peerConnection){
+            peerConnection.addIceCandidate(message.candidate)
+        }
+    }
 }
 
-let createOffer = async () => {
-  createPeerConnection('offer-sdp')
+let createPeerConnection = async (sdpType, MemberId) => {
+    peerConnection = new RTCPeerConnection(servers)
 
-  let offer = await peerConnection.createOffer()
-  await peerConnection.setLocalDescription(offer)
+    remoteStream = new MediaStream()
+    document.getElementById('user-2').srcObject = remoteStream
 
-  document.getElementById('offer-sdp').value = JSON.stringify(offer)
+    localStream.getTracks().forEach((track) => {
+        peerConnection.addTrack(track, localStream)
+    })
+
+    peerConnection.ontrack = async (event) => {
+        event.streams[0].getTracks().forEach((track) => {
+            remoteStream.addTrack(track)
+        })
+    }
+
+    peerConnection.onicecandidate = async (event) => {
+        if(event.candidate){
+            document.getElementById(sdpType).value = JSON.stringify(peerConnection.localDescription)
+            client.sendMessageToPeer({text:JSON.stringify({'type':'candidate', 'candidate':event.candidate})}, MemberId)
+        }
+    }
 }
 
-let createAnswer = async () => {
-  createPeerConnection('answer-sdp')
+let createOffer = async (MemberId) => {
+    
+    createPeerConnection('offer-sdp', MemberId)
 
-  let offer = document.querySelector('#offer-sdp').value
-  if(!offer) return alert('Retrieve offer from peer first...')
+    let offer = await peerConnection.createOffer()
+    await peerConnection.setLocalDescription(offer)
 
-  offer = JSON.parse(offer)
-  await peerConnection.setRemoteDescription(offer)
+    document.getElementById('offer-sdp').value = JSON.stringify(offer)
+    client.sendMessageToPeer({text:JSON.stringify({'type':'offer', 'offer':offer})}, MemberId)
+}
 
-  let answer = await peerConnection.createAnswer()
-  await peerConnection.setLocalDescription(answer)
+let createAnswer = async (MemberId) => {
+    createPeerConnection('answer-sdp', MemberId)
 
-  document.querySelector('#answer-sdp').value = JSON.stringify(answer)
+    let offer = document.getElementById('offer-sdp').value
+    if(!offer) return alert('Retrieve offer from peer first...')
+
+    offer = JSON.parse(offer)
+    await peerConnection.setRemoteDescription(offer)
+    
+    let answer = await peerConnection.createAnswer()
+    await peerConnection.setLocalDescription(answer)
+
+    document.getElementById('answer-sdp').value  = JSON.stringify(answer)
+    client.sendMessageToPeer({text:JSON.stringify({'type':'answer', 'answer':answer})}, MemberId)
 }
 
 let addAnswer = async () => {
-  let answer = document.querySelector('#answer-sdp').value
-  if (!answer) return alert('Retrieve answer from peer first...')
+    let answer = document.getElementById('answer-sdp').value
+    if(!answer) return alert('Retrieve answer from peer first...')
 
-  answer = JSON.parse(answer)
+    answer = JSON.parse(answer)
 
-  if(!peerConnection.currentRemoteDescription) {
-    peerConnection.setRemoteDescription(answer)
-  }
+    if(!peerConnection.currentRemoteDescription){
+        peerConnection.setRemoteDescription(answer)
+    }
+
 }
 
 init()
 
-document.querySelector('#create-offer').addEventListener('click', createOffer)
-document.querySelector('#create-answer').addEventListener('click', createAnswer)
-document.querySelector('#add-answer').addEventListener('click', addAnswer)
+// document.getElementById('create-offer').addEventListener('click', createOffer)
+// document.getElementById('create-answer').addEventListener('click', createAnswer)
+// document.getElementById('add-answer').addEventListener('click', addAnswer)
