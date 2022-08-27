@@ -1,6 +1,5 @@
 let APP_ID = 'de25ddfa18824309a3b511a91397e94f'
 
-
 let peerConnection;
 let localStream;
 let remoteStream;
@@ -123,7 +122,6 @@ let addAnswer = async () => {
     if(!peerConnection.currentRemoteDescription){
         peerConnection.setRemoteDescription(answer)
     }
-
 }
 
 init()
